@@ -57,14 +57,14 @@ class EnumValue(models.Model):
 
     For example:
 
-    > yes = EnumValue.objects.create(value='yes')
-    > no = EnumValue.objects.create(value='no')
-    > unkown = EnumValue.objects.create(value='unkown')
+    >>> yes = EnumValue.objects.create(value='yes')
+    >>> no = EnumValue.objects.create(value='no')
+    >>> unkown = EnumValue.objects.create(value='unkown')
 
-    > ynu = EnumGroup.objects.create(name='Yes / No / Unkown')
-    > ynu.enums.add(yes, no, unkown)
+    >>> ynu = EnumGroup.objects.create(name='Yes / No / Unkown')
+    >>> ynu.enums.add(yes, no, unkown)
 
-    > Attribute.objects.create(name='Has Fever?',
+    >>> Atrribute.objects.create(name='Has Fever?',
     ...                          datatype=Attribute.TYPE_ENUM,
     ...                          enum_group=ynu)
 
@@ -130,18 +130,18 @@ class Attribute(models.Model):
 
     Examples:
 
-    > Attribute.objects.create(name='Height', datatype=Attribute.TYPE_INT)
+    >>> Attribute.objects.create(name='Height', datatype=Attribute.TYPE_INT)
     <Attribute: Height (Integer)>
 
-    > Attribute.objects.create(name='Color', datatype=Attribute.TYPE_TEXT)
+    >>> Attribute.objects.create(name='Color', datatype=Attribute.TYPE_TEXT)
     <Attribute: Color (Text)>
 
-    > yes = EnumValue.objects.create(value='yes')
-    > no = EnumValue.objects.create(value='no')
-    > unkown = EnumValue.objects.create(value='unkown')
-    > ynu = EnumGroup.objects.create(name='Yes / No / Unkown')
-    > ynu.enums.add(yes, no, unkown)
-    > Attribute.objects.create(name='Has Fever?',
+    >>> yes = EnumValue.objects.create(value='yes')
+    >>> no = EnumValue.objects.create(value='no')
+    >>> unkown = EnumValue.objects.create(value='unkown')
+    >>> ynu = EnumGroup.objects.create(name='Yes / No / Unkown')
+    >>> ynu.enums.add(yes, no, unkown)
+    >>> Atrribute.objects.create(name='Has Fever?',
     ...                          datatype=Attribute.TYPE_ENUM,
     ...                          enum_group=ynu)
     <Attribute: Has Fever? (Multiple Choice)>
@@ -362,13 +362,13 @@ class Value(models.Model):
 
     Example:
 
-    > import eav
-    > from django.contrib.auth.models import User
-    > eav.register(User)
-    > u = User.objects.create(username='crazy_dev_user')
-    > a = Attribute.objects.create(name='Favorite Drink', datatype='text',
+    >>> import eav
+    >>> from django.contrib.auth.models import User
+    >>> eav.register(User)
+    >>> u = User.objects.create(username='crazy_dev_user')
+    >>> a = Attribute.objects.create(name='Favorite Drink', datatype='text',
     ... slug='fav_drink')
-    > Value.objects.create(entity=u, attribute=a, value_text='red bull')
+    >>> Value.objects.create(entity=u, attribute=a, value_text='red bull')
     <Value: crazy_dev_user - Favorite Drink: "red bull">
     '''
 
@@ -483,14 +483,27 @@ class Entity(object):
 
     def get_attributes_and_values(self):
         return dict( (v.attribute.slug, v.value) for v in self.get_values() )
+    def _hasattr(self, attribute_slug):
+        '''
+        Since we override __getattr__ with a backdown to the database, this exists as a way of 
+        checking whether a user has set a real attribute on ourselves, without going to the db if not
+        '''
+        return attribute_slug in self.__dict__
+
+    def _getattr(self, attribute_slug):
+        '''
+        Since we override __getattr__ with a backdown to the database, this exists as a way of 
+        getting the value a user set for one of our attributes, without going to the db to check
+        '''
+        return self.__dict__[attribute_slug]
 
     def save(self):
         '''
         Saves all the EAV values that have been set on this entity.
         '''
         for attribute in self.get_all_attributes():
-            if hasattr(self, attribute.slug):
-                attribute_value = getattr(self, attribute.slug)
+            if self._hasattr(attribute.slug):
+                attribute_value = self._getattr(attribute.slug)
                 attribute.save_value(self.model, attribute_value)
 
     def validate_attributes(self):
@@ -500,20 +513,34 @@ class Entity(object):
 
         Raise ``ValidationError`` if they can't be.
         '''
+        values_dict = self.get_values_dict()
+
         for attribute in self.get_all_attributes():
-            value = getattr(self, attribute.slug, None)
+            value = None
+            if self._hasattr(attribute.slug):
+                value = self._getattr(attribute.slug)
+            else:
+                value = values_dict.get(attribute.slug, None)
+            
             if value is None:
                 if attribute.required:
                     raise ValidationError(_(u"%(attr)s EAV field cannot " \
-                                            u"be blank") % \
-                                            {'attr': attribute.slug})
+                                                u"be blank") % \
+                                              {'attr': attribute.slug})
             else:
                 try:
                     attribute.validate_value(value)
                 except ValidationError, e:
                     raise ValidationError(_(u"%(attr)s EAV field %(err)s") % \
-                                            {'attr': attribute.slug,
-                                             'err': e})
+                                              {'attr': attribute.slug,
+                                               'err': e})
+                
+    def get_values_dict(self):
+        values_dict = dict()
+        for value in self.get_values():
+            values_dict[value.attribute.slug] = value.value
+
+        return values_dict
 
     def get_values(self):
         '''
@@ -546,7 +573,7 @@ class Entity(object):
 
         This would allow you to do:
 
-        > for i in m.eav: print i
+        >>> for i in m.eav: print i
         '''
         return iter(self.get_values())
 
