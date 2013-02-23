@@ -118,6 +118,9 @@ class Attribute(models.Model):
        to save or create any entity object for which this attribute applies,
        without first setting this EAV attribute.
 
+    The generic restriction_object field enables the user to restrict the scope
+    of the attribute to an arbitrary model, referenced by ID and Content Type
+
     There are 7 possible values for datatype:
 
         * int (TYPE_INT)
@@ -187,6 +190,13 @@ class Attribute(models.Model):
 
     enum_group = models.ForeignKey(EnumGroup, verbose_name=_(u"choice group"),
                                    blank=True, null=True)
+    generic_restriction_id = models.IntegerField(blank=True, null=True)
+    generic_restriction_ct = models.ForeignKey(ContentType, blank=True,
+                                         null=True,
+                                         related_name='attribute_restrictions')
+    restriction_object = generic.GenericForeignKey(
+                                             ct_field='generic_restriction_ct',
+                                             fk_field='generic_restriction_id')
 
     @property
     def help_text(self):
@@ -372,6 +382,10 @@ class Value(models.Model):
     <Value: crazy_dev_user - Favorite Drink: "red bull">
     '''
 
+    class Meta:
+        unique_together = ('entity_ct', 'entity_id', 'attribute')
+
+
     entity_ct = models.ForeignKey(ContentType, related_name='value_entities')
     entity_id = models.IntegerField()
     entity = generic.GenericForeignKey(ct_field='entity_ct',
@@ -445,14 +459,19 @@ class Entity(object):
     def __init__(self, instance):
         '''
         Set self.model equal to the instance of the model that we're attached
-        to.  Also, store the content type of that instance.
+        to.  Also, store the content type of that instance and the restriction
+        attribute of the model if it has been restricted.
         '''
         self.model = instance
         self.ct = ContentType.objects.get_for_model(instance)
+        if hasattr(instance, 'eav_restriction_object'):
+            self.restriction = instance.eav_restriction_object
+        else:
+            self.restriction = None
 
     def __getattr__(self, name):
         '''
-        Tha magic getattr helper.  This is called whenevery you do
+        Tha magic getattr helper.  This is called whenever you do
         this_instance.<whatever>
 
         Checks if *name* is a valid slug for attributes available to this
@@ -479,7 +498,10 @@ class Entity(object):
         Return a query set of all :class:`Attribute` objects that can be set
         for this entity.
         '''
-        return self.model._eav_config_cls.get_attributes()
+        if self.restriction is not None:
+            return self.model._eav_config_cls.get_attributes(self.restriction)
+        else:
+            return self.model._eav_config_cls.get_attributes()
 
     def get_attributes_and_values(self):
         return dict( (v.attribute.slug, v.value) for v in self.get_values() )
